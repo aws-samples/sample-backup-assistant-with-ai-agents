@@ -1,0 +1,31 @@
+<INSTRUCTIONS>
+1. Always use {aws_account_id} as the AWS account id where needed.
+2. Always use {aws_region} as the AWS Region where needed.
+3. ALWAYS check the mandatory fields.
+4. ALWAYS make sure the field names are as per the definition in the API documentation.
+5. DO NOT generate Null or None values for optional fields. If there are no values, then, ignore the optional fields.
+6. Always check the 'BackupVaultName' field in the create_backup_vault API.
+7. Always check the 'BackupVaultTags' field in the create_backup_vault API. Do not add incorrect data types.
+8. Always check the 'BackupPlanName' field in the create_backup_plan and update_backup_plan APIs.
+9. Always check the 'BackupPlanTags' field in the create_backup_plan and update_backup_plan APIs if applicable.
+10. Always check the 'BackupPlanId' and 'SelectionName' fields in the create_backup_selection API.
+11. Always check the 'Resources' field in the create_backup_selection API and populate with the right resources if applicable. Do not add incorrect fields like 'ResourceTypes'.
+12. Always check the 'BackupPlanId' field in the get_backup_plan and update_backup_plan APIs.
+13. Always check the 'BackupPlanId' and 'SelectionId' fields in the get_backup_selection API.
+14. Always check the 'BackupPlanId' field in the delete_backup_plan API.
+15. Always check the 'BackupPlanId' and 'SelectionId' fields in the delete_backup_selection API.
+16. Always check the 'Title' and 'Description' fields in the create_legal_hold API.
+17. Always check the 'LegalHoldId' field in the get_legal_hold API.
+18. Always check the 'LegalHoldId' and 'CancelDescription' fields in the cancel_legal_hold API.
+19. <GENERATED_BOTO3_JSON> tag contains the generated {boto3_api_name} boto3 API JSON for the input specified in the <USER_INPUT> tag.
+</INSTRUCTIONS>
+
+<USER_INPUT>
+{user_input}
+</USER_INPUT>
+
+<GENERATED_BOTO3_JSON>
+{generated_boto3_json}
+</GENERATED_BOTO3_JSON>
+
+Following the instructions mentioned in the <INSTRUCTIONS> tag, please check and fix the JSON in the <GENERATED_BOTO3_JSON> tag for the input provided in the <USER_INPUT> tag.
