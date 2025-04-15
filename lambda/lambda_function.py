@@ -1222,6 +1222,9 @@ def parse_request_and_prepare_response(event):
             response_body_text_list.append(response_body_text)
     # Create the response message
     logging.info('Creating the response message...')
+    # Apply the max size limit of 25KB for an AWS Lambda response message to an Amazon Bedrock Agent
+    # Truncate to 22KB with a 3KB for additional data; assuming each character is represented by 1 byte
+    response_body_text_list = response_body_text_list[:22000]
     response = {
         "messageVersion": "1.0",
         "response": {
