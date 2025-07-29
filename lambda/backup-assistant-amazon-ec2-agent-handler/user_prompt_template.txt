@@ -1,0 +1,18 @@
+<INSTRUCTIONS>
+1. Always use {aws_account_id} as the AWS account id where needed.
+2. Always use {aws_region} as the AWS Region where needed.
+3. ALWAYS check the mandatory fields.
+4. ALWAYS make sure the field names are as per the definition in the API documentation.
+5. DO NOT generate Null or None values for optional fields. If there are no values, then, ignore the optional fields.
+6. <GENERATED_BOTO3_JSON> tag contains the generated {boto3_api_name} boto3 API JSON for the input specified in the <USER_INPUT> tag.
+</INSTRUCTIONS>
+
+<USER_INPUT>
+{user_input}
+</USER_INPUT>
+
+<GENERATED_BOTO3_JSON>
+{generated_boto3_json}
+</GENERATED_BOTO3_JSON>
+
+Following the instructions mentioned in the <INSTRUCTIONS> tag, please check and fix the JSON in the <GENERATED_BOTO3_JSON> tag for the input provided in the <USER_INPUT> tag.

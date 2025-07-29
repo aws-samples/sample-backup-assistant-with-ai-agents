@@ -1,0 +1,18 @@
+When running the Amazon S3 boto3 API named '{boto3_api_name}' using the JSON document mentioned in the <BOTO3_JSON> tag, we get an error that mentioned in the <BOTO3_ERROR> tag. Based on your expertise of Amazon S3 and boto APIs, please fix the JSON document as per the instructions mentioned in the <INSTRUCTIONS> tag.
+
+<INSTRUCTIONS>
+1. Always use {aws_account_id} as the AWS account id where needed.
+2. Always use {aws_region} as the AWS Region where needed.
+3. Always generate a valid boto3 JSON document.
+4. Produce your output in the <FIXED_BOTO3_JSON> tag.
+5. Do not generate any preamble, postamble, or explanation.
+</INSTRUCTIONS>
+
+
+<BOTO3_JSON>
+{boto3_json}
+</BOTO3_JSON>
+
+<BOTO3_ERROR>
+{boto3_error}
+<BOTO3_ERROR>
