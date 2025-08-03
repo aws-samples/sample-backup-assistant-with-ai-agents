@@ -1,0 +1,1867 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: 'Backup assistant with AI agents'
+Parameters:
+  DeploymentArtifactsS3BucketName:
+    Description: The S3 bucket that contains the artifacts for deployment
+    Type: String
+    Default: <Your S3 bucket name that contains these files - py313_opensearch-py_requests_and_requests-aws4auth.zip, backup-assistant-aws-backup-agent-handler.zip, backup-assistant-amazon-ec2-agent-handler.zip, backup-assistant-amazon-s3-agent-handler.zip, backup-assistant-amazon-rds-agent-handler.zip>
+  LambdaLayerS3FileKey:
+    Description: The name of the zip file in S3 that contains the Lambda Layer content
+    Type: String
+    Default: py313_opensearch-py_requests_and_requests-aws4auth.zip
+  AWSBackupAgentHandlerLambdaFunctionCodeS3FileKey:
+    Description: The name of the zip file in S3 that contains the Lambda function code to perform AWS Backup operations
+    Type: String
+    Default: backup-assistant-aws-backup-agent-handler.zip
+  AmazonEC2AgentHandlerLambdaFunctionCodeS3FileKey:
+    Description: The name of the zip file in S3 that contains the Lambda function code to perform Amazon EC2 operations
+    Type: String
+    Default: backup-assistant-amazon-ec2-agent-handler.zip
+  AmazonS3AgentHandlerLambdaFunctionCodeS3FileKey:
+    Description: The name of the zip file in S3 that contains the Lambda function code to perform Amazon S3 operations
+    Type: String
+    Default: backup-assistant-amazon-s3-agent-handler.zip
+  AmazonRDSAgentHandlerLambdaFunctionCodeS3FileKey:
+    Description: The name of the zip file in S3 that contains the Lambda function code to perform Amazon RDS operations
+    Type: String
+    Default: backup-assistant-amazon-rds-agent-handler.zip
+  CodeRepositoryURL:
+    Description: The URL to the code repository
+    Type: String
+    Default: https://github.com/aws-samples/sample-backup-assistant-with-ai-agents
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.192.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: BackupAssistantVPC
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: BackupAssistantPrivateRouteTable
+    DependsOn:
+      - VPC
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      CidrBlock: 10.192.20.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: BackupAssistantPrivateSubnet1
+    DependsOn:
+      - VPC
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs  '' ]
+      CidrBlock: 10.192.21.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: BackupAssistantPrivateSubnet2
+    DependsOn:
+      - VPC
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet1
+    DependsOn:
+      - PrivateRouteTable
+      - PrivateSubnet1
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet2
+    DependsOn:
+      - PrivateRouteTable
+      - PrivateSubnet2
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: BackupAssistantPublicRouteTable
+    DependsOn:
+      - VPC
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.192.10.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: BackupAssistantPublicSubnet
+    DependsOn:
+      - VPC
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+    DependsOn:
+      - PublicRouteTable
+      - PublicSubnet
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: BackupAssistantInternetGateway
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+    DependsOn:
+      - VPC
+      - InternetGateway
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+    DependsOn:
+      - InternetGatewayAttachment
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: BackupAssistantNATGateway
+    DependsOn:
+      - NatGatewayEIP
+      - PublicSubnet
+  DefaultPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+    DependsOn:
+      - NatGateway
+      - PrivateRouteTable
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+    DependsOn:
+      - InternetGateway
+      - PublicRouteTable
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Backup assistant security group
+      SecurityGroupEgress:
+        - Description: HTTPS rule
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: BackupAssistantSecurityGroup
+    DependsOn:
+      - VPC
+  SecurityGroupIngress1:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+        GroupId: !GetAtt SecurityGroup.GroupId
+        Description: Self-referencing HTTPS rule
+        IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        SourceSecurityGroupId: !GetAtt SecurityGroup.GroupId
+    DependsOn:
+      - SecurityGroup
+
+  BackupAssistantKey:
+    Type: 'AWS::KMS::Key'
+    Properties:
+      Description: KMS CMK for backup-assistant
+      Enabled: true
+      EnableKeyRotation: true
+      KeyPolicy: {
+          "Version": "2012-10-17",
+          "Id": "backup-assistant-keypolicy",
+          "Statement": [
+              {
+                  "Sid": "Enable IAM User Permissions",
+                  "Effect": "Allow",
+                  "Principal": {
+                      "AWS": !Join [ "", [ "arn:aws:iam::", !Ref AWS::AccountId, ":root" ] ]
+                  },
+                  "Action": "kms:*",
+                  "Resource": "*"
+              }
+          ]
+      }
+      KeySpec: SYMMETRIC_DEFAULT
+      KeyUsage: ENCRYPT_DECRYPT
+      MultiRegion: false
+      Origin: AWS_KMS
+      PendingWindowInDays: 7
+      RotationPeriodInDays: 365
+
+  LambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: py313_opensearch-py_requests_and_requests-aws4auth
+      Description: Python 3.13 opensearch-py, requests and requests-aws4auth packages
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.13
+      Content:
+        S3Bucket:
+          Ref: DeploymentArtifactsS3BucketName
+        S3Key:
+          Ref: LambdaLayerS3FileKey
+
+  AOSSIndexCreationLambdaFunctionExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Description: AOSS Index Creation Lambda execution role for backup-assistant
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+  AOSSIndexCreationLambdaFunctionExecutionRolePolicy:
+    Type: 'AWS::IAM::RolePolicy'
+    Properties:
+      PolicyName: AOSSIndexCreationLambdaFunctionExecutionRolePolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "AOSSPermissions"
+            Effect: Allow
+            Action:
+              - aoss:APIAccessAll
+            Resource:
+              - !Join [ "", [ "arn:aws:aoss:", !Ref AWS::Region, ":", !Ref AWS::AccountId, ":collection/*" ] ]
+              - !Join [ "", [ "arn:aws:aoss:", !Ref AWS::Region, ":", !Ref AWS::AccountId, ":index/*/*" ] ]
+          - Sid: "SQSPermissions"
+            Effect: Allow
+            Action:
+              - sqs:SendMessage
+            Resource:
+              - !GetAtt LambdaDLQueue.Arn
+      RoleName: !Ref AOSSIndexCreationLambdaFunctionExecutionRole
+    DependsOn:
+      - AOSSIndexCreationLambdaFunctionExecutionRole
+
+  AgentHandlerLambdaFunctionExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Description: Agent Handler Lambda execution role for backup-assistant
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - backup.amazonaws.com
+                - ec2.amazonaws.com
+                - s3.amazonaws.com
+                - rds.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+        - 'arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup'
+        - 'arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores'
+        - 'arn:aws:iam::aws:policy/AmazonEC2FullAccess'
+        - 'arn:aws:iam::aws:policy/AmazonS3FullAccess'
+        - 'arn:aws:iam::aws:policy/AmazonRDSFullAccess'
+  AgentHandlerLambdaFunctionExecutionRolePolicy:
+    Type: 'AWS::IAM::RolePolicy'
+    Properties:
+      PolicyName: AgentHandlerLambdaFunctionExecutionRolePolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "BedrockInvokePermissions"
+            Effect: Allow
+            Action:
+              - bedrock:Invoke*
+            Resource: "*"
+          - Sid: "SQSPermissions"
+            Effect: Allow
+            Action:
+              - sqs:SendMessage
+            Resource:
+              - !GetAtt LambdaDLQueue.Arn
+          - Sid: "KMSPermissions"
+            Effect: Allow
+            Action:
+              - kms:CreateGrant
+              - kms:GenerateDataKey
+              - kms:Decrypt
+              - kms:RetireGrant
+              - kms:DescribeKey
+            Resource:
+              - !GetAtt BackupAssistantKey.Arn
+          - Sid: "BackupPermissions"
+            Effect: Allow
+            Action:
+              - backup:*
+            Resource: '*'
+          - Sid: "BackupStoragePermissions"
+            Effect: Allow
+            Action:
+              - backup-storage:MountCapsule
+            Resource: '*'
+          - Sid: "PassRolePermissions"
+            Effect: Allow
+            Action:
+              - iam:PassRole
+            Resource:
+              - !Join [ "", [ "arn:aws:iam::", !Ref AWS::AccountId, ":role/*" ] ]
+            Condition:
+              StringEquals:
+                "iam:PassedToService": "backup.amazonaws.com"
+      RoleName: !Ref AgentHandlerLambdaFunctionExecutionRole
+    DependsOn:
+      - BackupAssistantKey
+      - AgentHandlerLambdaFunctionExecutionRole
+
+  LambdaDLQueue:
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      KmsMasterKeyId: !GetAtt BackupAssistantKey.KeyId
+      QueueName: backup-assistant-lambda-dlq
+    DependsOn:
+      - BackupAssistantKey
+  LambdaDLQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyAllExceptCurrentAccount
+            Effect: Deny
+            Principal: '*'
+            Action: 'sqs:*'
+            Resource: !GetAtt LambdaDLQueue.Arn
+            Condition:
+              StringNotEquals:
+                'aws:PrincipalAccount':
+                  - !Ref AWS::AccountId
+          - Sid: AllowActionsFromOwnersInCurrentAccount
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Join [ "", [ "arn:aws:iam::", !Ref AWS::AccountId, ":root" ] ]
+                - !GetAtt AOSSIndexCreationLambdaFunctionExecutionRole.Arn
+                - !GetAtt AgentHandlerLambdaFunctionExecutionRole.Arn
+            Action:
+              - 'sqs:SendMessage'
+              - 'sqs:ReceiveMessage'
+              - 'sqs:DeleteMessage'
+              - 'sqs:ChangeMessageVisibility'
+              - 'sqs:GetQueueAttributes'
+              - 'sqs:GetQueueUrl'
+              - 'sqs:DeleteQueue'
+            Resource: !GetAtt LambdaDLQueue.Arn
+          - Sid: DenyUnsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action:
+              - 'sqs:SendMessage'
+              - 'sqs:ReceiveMessage'
+            Resource: !GetAtt LambdaDLQueue.Arn
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+      Queues:
+        - !Ref LambdaDLQueue
+    DependsOn:
+      - LambdaDLQueue
+
+  S3AccessLogsS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Join [ "-", [ Ref: AWS::AccountId, "backup-assistant-s3-access-logs" ] ]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: false
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: "aws:kms"
+              KMSMasterKeyID: !GetAtt BackupAssistantKey.Arn
+      ObjectLockEnabled: false
+    DependsOn:
+      - BackupAssistantKey
+  S3AccessLogsS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3AccessLogsS3Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "AllowSSLRequestsOnly"
+            Effect: Deny
+            Principal: '*'
+            Action: "s3:*"
+            Resource:
+              - !GetAtt S3AccessLogsS3Bucket.Arn
+              - !Join [ "", [ !GetAtt S3AccessLogsS3Bucket.Arn, "/*" ] ]
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+    DependsOn:
+      - S3AccessLogsS3Bucket
+
+  KBDataSourceS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Join [ "-", [ Ref: AWS::AccountId, "backup-assistant" ] ]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: false
+            ServerSideEncryptionByDefault:
+              SSEAlgorithm: "aws:kms"
+              KMSMasterKeyID: !GetAtt BackupAssistantKey.Arn
+      ObjectLockEnabled: false
+      LoggingConfiguration:
+        DestinationBucketName: !Ref S3AccessLogsS3Bucket
+        LogFilePrefix: !Join [ "-", [ Ref: AWS::AccountId, "backup-assistant" ] ]
+        TargetObjectKeyFormat:
+          SimplePrefix: {}
+    DependsOn:
+      - BackupAssistantKey
+      - S3AccessLogsS3Bucket
+  KBDataSourceS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref KBDataSourceS3Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "AllowSSLRequestsOnly"
+            Effect: Deny
+            Principal: '*'
+            Action: "s3:*"
+            Resource:
+              - !GetAtt KBDataSourceS3Bucket.Arn
+              - !Join [ "", [ !GetAtt KBDataSourceS3Bucket.Arn, "/*" ] ]
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+    DependsOn:
+      - KBDataSourceS3Bucket
+
+  BedrockKBExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Description: Bedrock Knowledge Base execution role for backup-assistant
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - bedrock.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+              ArnLike:
+                "AWS:SourceArn": !Join [ "", [ "arn:aws:bedrock:", !Ref AWS::Region, ":", !Ref AWS::AccountId, ":knowledge-base/*" ] ]
+  BedrockKBExecutionRolePolicy:
+    Type: 'AWS::IAM::RolePolicy'
+    Properties:
+      PolicyName: BedrockKBExecutionRolePolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "BedrockListModelsPermissions"
+            Effect: Allow
+            Action:
+              - bedrock:ListFoundationModels
+              - bedrock:ListCustomModels
+            Resource: '*'
+          - Sid: "BedrockInvokeModelPermissions"
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+            Resource:
+              - !Join [ "", [ "arn:aws:bedrock:", !Ref AWS::Region, "::foundation-model/amazon.titan-embed-text-v2:0" ] ]
+          - Sid: "KMSPermissions"
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource:
+              - !GetAtt BackupAssistantKey.Arn
+          - Sid: "S3ListBucketPermissions"
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource:
+              - !GetAtt KBDataSourceS3Bucket.Arn
+            Condition:
+              StringEquals:
+                "aws:ResourceAccount": !Ref AWS::AccountId
+          - Sid: "S3GetObjectPermissions"
+            Effect: Allow
+            Action:
+              - s3:GetObject
+            Resource:
+              - !Join [ "", [ !GetAtt KBDataSourceS3Bucket.Arn, "/*" ] ]
+            Condition:
+              StringEquals:
+                "aws:ResourceAccount": !Ref AWS::AccountId
+          - Sid: "AOSSPermissions"
+            Effect: Allow
+            Action:
+              - aoss:APIAccessAll
+            Resource:
+              - !Join [ "", [ "arn:aws:aoss:", !Ref AWS::Region, ":", !Ref AWS::AccountId, ":collection/*" ] ]
+              - !Join [ "", [ "arn:aws:aoss:", !Ref AWS::Region, ":", !Ref AWS::AccountId, ":index/*/*" ] ]
+      RoleName: !Ref BedrockKBExecutionRole
+    DependsOn:
+      - BackupAssistantKey
+      - BedrockKBExecutionRole
+      - KBDataSourceS3Bucket
+
+  AOSSDataAccessPolicy:
+    Type: 'AWS::OpenSearchServerless::AccessPolicy'
+    Properties:
+      Name: backup-assistant-dap
+      Type: data
+      Description: Data access policy for backup-assistant collection
+      Policy: !Sub >-
+        [{"Description":"Access for cfn user","Rules":[{"ResourceType":"index","Resource":["index/backup-assistant-collection/*"],"Permission":["aoss:*"]},
+        {"ResourceType":"collection","Resource":["collection/backup-assistant-collection"],"Permission":["aoss:*"]}],
+        "Principal":["${AOSSIndexCreationLambdaFunctionExecutionRole.Arn}","${BedrockKBExecutionRole.Arn}"]}]
+    DependsOn:
+      - AOSSIndexCreationLambdaFunctionExecutionRolePolicy
+      - BedrockKBExecutionRolePolicy
+  AOSSNetworkPolicy:
+    Type: 'AWS::OpenSearchServerless::SecurityPolicy'
+    Properties:
+      Name: backup-assistant-np
+      Type: network
+      Description: Network policy for backup-assistant collection
+      Policy: >-
+        [{"Rules":[{"ResourceType":"collection","Resource":["collection/backup-assistant-collection"]},
+        {"ResourceType":"dashboard","Resource":["collection/backup-assistant-collection"]}],
+        "AllowFromPublic":true}]
+  AOSSEncryptionPolicy:
+    Type: 'AWS::OpenSearchServerless::SecurityPolicy'
+    Properties:
+      Name: backup-assistant-sp
+      Type: encryption
+      Description: Encryption policy for backup-assistant collection
+      Policy: >-
+        {"Rules":[{"ResourceType":"collection","Resource":["collection/backup-assistant-collection"]}],
+        "AWSOwnedKey":true}
+  AOSSCollection:
+    Type: 'AWS::OpenSearchServerless::Collection'
+    Properties:
+      Name: backup-assistant-collection
+      Type: VECTORSEARCH
+      Description: Collection to hold the embeddings for the content to query
+    DependsOn:
+      - AOSSEncryptionPolicy
+      - AOSSNetworkPolicy
+      - AOSSDataAccessPolicy
+
+  AOSSIndexCreationLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQueue.Arn
+      Description: Function to create the AOSS Index
+      Handler: index.lambda_handler
+      FunctionName: backup-assistant-aoss-index-creation
+      MemorySize: 128
+      ReservedConcurrentExecutions: 2
+      Runtime: python3.13
+      Role: !GetAtt AOSSIndexCreationLambdaFunctionExecutionRole.Arn
+      Timeout: 240
+      Environment:
+        Variables:
+          REGION:
+            Ref: AWS::Region
+          AOSSCOLLECTIONID: !GetAtt AOSSCollection.Id
+          AOSSINDEXNAME: backup-assistant-index
+      Code:
+        ZipFile: |
+          import botocore.session
+          from botocore.credentials import Credentials
+          import cfnresponse
+          import json
+          from opensearchpy import OpenSearch, RequestsHttpConnection, AWSV4SignerAuth
+          import os
+          import time
+
+
+          # Function to create the OpenSearch client for AOSS
+          def get_os_client(region, collection_id):
+              host = "{}.{}.aoss.amazonaws.com".format(collection_id, region)
+              # Get the credentials from the boto3 session
+              credentials = botocore.session.Session().get_credentials()
+              auth = AWSV4SignerAuth(credentials, region, 'aoss')
+              # Create an OpenSearch client and use the request-signer
+              os_client = OpenSearch(
+                  hosts=[{'host': host, 'port': 443}],
+                  http_auth=auth,
+                  use_ssl=True,
+                  verify_certs=True,
+                  connection_class=RequestsHttpConnection,
+                  pool_maxsize=20,
+                  timeout=3000
+              )
+              return os_client
+
+
+          # Function to create the OpenSearch index
+          def create_index(aoss_py_client, index_name):
+              knn_index = {
+                  "settings": {
+                      "index.knn": True,
+                  },
+                  "mappings": {
+                      "properties": {
+                          "vector": {
+                              "type": "knn_vector",
+                              "dimension": 1024,
+                              "method": {
+                                "engine": "faiss",
+                                "name": "hnsw"
+                              }
+                          },
+                          "text": {
+                              "type": "text"
+                          },
+                          "metadata": {
+                              "type": "text"
+                          }
+                      }
+                  }
+              }
+              aoss_py_client.indices.create(index=index_name, body=knn_index, ignore=400)
+
+
+          # Function to delete the OpenSearch index
+          def delete_index(aoss_py_client, index_name):
+              aoss_py_client.indices.delete(index=index_name, ignore=400)
+
+
+           # Lambda handler function
+          def lambda_handler(event, context):
+              response_data = {}
+              response_data['Data'] = ''
+              print(event)
+              print(context)
+              physical_record_id = context.log_group_name
+              try:
+                  # Get the input parameters
+                  region = os.environ['REGION']
+                  collection_id = os.environ['AOSSCOLLECTIONID']
+                  index_name = os.environ['AOSSINDEXNAME']
+                  # Create the client
+                  aoss_py_client = get_os_client(region, collection_id)
+                  # Process based on event type
+                  if event['RequestType'] == 'Create':
+                      # Create the AOSS index
+                      print('Creating the AOSS index "{}"'.format(index_name))                     
+                      create_index(aoss_py_client, index_name)
+                      print('Created the AOSS index "{}"'.format(index_name))
+                      print('Waiting for 60 seconds...')
+                      time.sleep(60)
+                      print('Completed waiting for 60 seconds.')
+                  elif event['RequestType'] == 'Delete':
+                      # Delete the AOSS index
+                      print('Deleting the AOSS index "{}"'.format(index_name))
+                      delete_index(aoss_py_client, index_name)
+                      print('Deleted the AOSS index "{}"'.format(index_name))
+                      print('Waiting for 60 seconds...')
+                      time.sleep(60)
+                      print('Completed waiting for 60 seconds.')
+                  else:
+                      print('Skipped creating/deleting the AOSS index "{}"'.format(index_name))
+                  # Send the SUCCESS response to CloudFormation
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response_data)
+              except Exception as exception:
+                  print('Exception occurred :: {}'.format(exception))
+                  # Send the FAILED response to CloudFormation
+                  cfnresponse.send(event, context, cfnresponse.FAILED, response_data)
+      KmsKeyArn: !GetAtt BackupAssistantKey.Arn
+      Layers:
+        - !GetAtt LambdaLayer.LayerVersionArn
+      VpcConfig:
+        SecurityGroupIds:
+          - !GetAtt SecurityGroup.GroupId
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+    DependsOn:
+      - BackupAssistantKey
+      - AOSSCollection
+      - LambdaLayer
+      - AOSSIndexCreationLambdaFunctionExecutionRolePolicy
+      - SecurityGroup
+      - PrivateSubnet1
+      - PrivateSubnet2
+  AOSSIndexCreationLambdaFunctionInvoke:
+    Type: AWS::CloudFormation::CustomResource
+    Version: "1.0"
+    Properties:
+      ServiceToken: !GetAtt AOSSIndexCreationLambdaFunction.Arn
+    DependsOn:
+      - AOSSIndexCreationLambdaFunction
+
+  BedrockKB:
+    Type: 'AWS::Bedrock::KnowledgeBase'
+    Properties:
+      Name: backup-assistant-bedrock-kb
+      KnowledgeBaseConfiguration:
+        Type: VECTOR
+        VectorKnowledgeBaseConfiguration:
+          EmbeddingModelArn: !Join [ "", [ "arn:aws:bedrock:", !Ref AWS::Region, "::foundation-model/amazon.titan-embed-text-v2:0" ] ]
+      StorageConfiguration:
+        OpensearchServerlessConfiguration:
+          CollectionArn: !GetAtt AOSSCollection.Arn
+          FieldMapping:
+            MetadataField: metadata
+            TextField: text
+            VectorField: vector
+          VectorIndexName: backup-assistant-index
+        Type: OPENSEARCH_SERVERLESS
+      RoleArn: !GetAtt BedrockKBExecutionRole.Arn
+      Description: Knowledge Base to provide the RAG capability for backup assistant
+    DependsOn:
+      - AOSSCollection
+      - AOSSIndexCreationLambdaFunctionInvoke
+      - BedrockKBExecutionRolePolicy
+  BedrockKBCustomDataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      Name: backup-assistant-bedrock-kb-custom-ds
+      Description: Custom Data Source for the Knowledge Base that provides the RAG capability
+      KnowledgeBaseId: !GetAtt BedrockKB.KnowledgeBaseId
+      DataSourceConfiguration:
+        Type: CUSTOM
+      ServerSideEncryptionConfiguration:
+        KmsKeyArn: !GetAtt BackupAssistantKey.Arn
+      VectorIngestionConfiguration:
+        ChunkingConfiguration:
+          ChunkingStrategy: FIXED_SIZE
+          FixedSizeChunkingConfiguration:
+            MaxTokens: 8192
+            OverlapPercentage: 10
+    DependsOn:
+      - BackupAssistantKey
+      - BedrockKB
+  BedrockKBS3DataSource:
+    Type: AWS::Bedrock::DataSource
+    Properties:
+      Name: backup-assistant-bedrock-kb-s3-ds
+      Description: S3 Data Source for the Knowledge Base that provides the RAG capability
+      KnowledgeBaseId: !GetAtt BedrockKB.KnowledgeBaseId
+      DataSourceConfiguration:
+        Type: S3
+        S3Configuration:
+          BucketArn: !GetAtt KBDataSourceS3Bucket.Arn
+      ServerSideEncryptionConfiguration:
+        KmsKeyArn: !GetAtt BackupAssistantKey.Arn
+      VectorIngestionConfiguration:
+        ChunkingConfiguration:
+          ChunkingStrategy: FIXED_SIZE
+          FixedSizeChunkingConfiguration:
+            MaxTokens: 8192
+            OverlapPercentage: 10
+    DependsOn:
+      - BackupAssistantKey
+      - BedrockKB
+
+  AWSBackupAgentHandlerLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQueue.Arn
+      Description: Function to handle AWS Backup actions when called from an Amazon Bedrock agent.
+      Handler: lambda_function.lambda_handler
+      FunctionName: backup-assistant-aws-backup-agent-handler
+      MemorySize: 1024
+      ReservedConcurrentExecutions: 5
+      Runtime: python3.13
+      Role: !GetAtt AgentHandlerLambdaFunctionExecutionRole.Arn
+      Timeout: 600
+      Environment:
+        Variables:
+          BOTO3_API_MAX_RESULTS: 100
+          DEFAULT_AWS_REGION: us-west-2
+          LLM_MODEL_OR_INFERENCE_PROFILE_ID: us.anthropic.claude-3-7-sonnet-20250219-v1:0
+          LOG_LEVEL: INFO
+          LOG_LLM_PROCESSING_INFO: True
+          SYSTEM_PROMPT_FILE_NAME: system_prompt_template.txt
+          SYSTEM_PROMPT_FOR_BOTO3_RETRY_FILE_NAME: system_prompt_template_for_boto3_retry.txt
+          USER_PROMPT_FILE_NAME: user_prompt_template.txt
+          USER_PROMPT_FOR_BOTO3_RETRY_FILE_NAME: user_prompt_template_for_boto3_retry.txt
+      Code:
+        S3Bucket:
+          Ref: DeploymentArtifactsS3BucketName
+        S3Key:
+          Ref: AWSBackupAgentHandlerLambdaFunctionCodeS3FileKey
+      KmsKeyArn: !GetAtt BackupAssistantKey.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - !GetAtt SecurityGroup.GroupId
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+    DependsOn:
+      - BackupAssistantKey
+      - AgentHandlerLambdaFunctionExecutionRole
+      - SecurityGroup
+      - PrivateSubnet1
+      - PrivateSubnet2
+  BedrockAgentAccessToInvokeAWSBackupAgentHandlerLambdaFunction:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt AWSBackupAgentHandlerLambdaFunction.Arn
+      Principal: bedrock.amazonaws.com
+      SourceAccount:
+        Ref: AWS::AccountId
+    DependsOn:
+      - AWSBackupAgentHandlerLambdaFunction
+
+  AmazonEC2AgentHandlerLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQueue.Arn
+      Description: Function to handle Amazon EC2 actions when called from an Amazon Bedrock agent.
+      Handler: lambda_function.lambda_handler
+      FunctionName: backup-assistant-amazon-ec2-agent-handler
+      MemorySize: 1024
+      ReservedConcurrentExecutions: 5
+      Runtime: python3.13
+      Role: !GetAtt AgentHandlerLambdaFunctionExecutionRole.Arn
+      Timeout: 600
+      Environment:
+        Variables:
+          BOTO3_API_MAX_RESULTS: 100
+          DEFAULT_AWS_REGION: us-west-2
+          LLM_MODEL_OR_INFERENCE_PROFILE_ID: us.anthropic.claude-3-7-sonnet-20250219-v1:0
+          LOG_LEVEL: INFO
+          LOG_LLM_PROCESSING_INFO: True
+          SYSTEM_PROMPT_FILE_NAME: system_prompt_template.txt
+          SYSTEM_PROMPT_FOR_BOTO3_RETRY_FILE_NAME: system_prompt_template_for_boto3_retry.txt
+          USER_PROMPT_FILE_NAME: user_prompt_template.txt
+          USER_PROMPT_FOR_BOTO3_RETRY_FILE_NAME: user_prompt_template_for_boto3_retry.txt
+      Code:
+        S3Bucket:
+          Ref: DeploymentArtifactsS3BucketName
+        S3Key:
+          Ref: AmazonEC2AgentHandlerLambdaFunctionCodeS3FileKey
+      KmsKeyArn: !GetAtt BackupAssistantKey.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - !GetAtt SecurityGroup.GroupId
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+    DependsOn:
+      - BackupAssistantKey
+      - AgentHandlerLambdaFunctionExecutionRole
+      - SecurityGroup
+      - PrivateSubnet1
+      - PrivateSubnet2
+  BedrockAgentAccessToInvokeAmazonEC2AgentHandlerLambdaFunction:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt AmazonEC2AgentHandlerLambdaFunction.Arn
+      Principal: bedrock.amazonaws.com
+      SourceAccount:
+        Ref: AWS::AccountId
+    DependsOn:
+      - AmazonEC2AgentHandlerLambdaFunction
+
+  AmazonS3AgentHandlerLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQueue.Arn
+      Description: Function to handle Amazon S3 actions when called from an Amazon Bedrock agent.
+      Handler: lambda_function.lambda_handler
+      FunctionName: backup-assistant-amazon-s3-agent-handler
+      MemorySize: 1024
+      ReservedConcurrentExecutions: 5
+      Runtime: python3.13
+      Role: !GetAtt AgentHandlerLambdaFunctionExecutionRole.Arn
+      Timeout: 600
+      Environment:
+        Variables:
+          BOTO3_API_MAX_RESULTS: 100
+          DEFAULT_AWS_REGION: us-west-2
+          LLM_MODEL_OR_INFERENCE_PROFILE_ID: us.anthropic.claude-3-7-sonnet-20250219-v1:0
+          LOG_LEVEL: INFO
+          LOG_LLM_PROCESSING_INFO: True
+          SYSTEM_PROMPT_FILE_NAME: system_prompt_template.txt
+          SYSTEM_PROMPT_FOR_BOTO3_RETRY_FILE_NAME: system_prompt_template_for_boto3_retry.txt
+          USER_PROMPT_FILE_NAME: user_prompt_template.txt
+          USER_PROMPT_FOR_BOTO3_RETRY_FILE_NAME: user_prompt_template_for_boto3_retry.txt
+      Code:
+        S3Bucket:
+          Ref: DeploymentArtifactsS3BucketName
+        S3Key:
+          Ref: AmazonS3AgentHandlerLambdaFunctionCodeS3FileKey
+      KmsKeyArn: !GetAtt BackupAssistantKey.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - !GetAtt SecurityGroup.GroupId
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+    DependsOn:
+      - BackupAssistantKey
+      - AgentHandlerLambdaFunctionExecutionRole
+      - SecurityGroup
+      - PrivateSubnet1
+      - PrivateSubnet2
+  BedrockAgentAccessToInvokeAmazonS3AgentHandlerLambdaFunction:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt AmazonS3AgentHandlerLambdaFunction.Arn
+      Principal: bedrock.amazonaws.com
+      SourceAccount:
+        Ref: AWS::AccountId
+    DependsOn:
+      - AmazonS3AgentHandlerLambdaFunction
+
+  AmazonRDSAgentHandlerLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      DeadLetterConfig:
+        TargetArn: !GetAtt LambdaDLQueue.Arn
+      Description: Function to handle Amazon RDS actions when called from an Amazon Bedrock agent.
+      Handler: lambda_function.lambda_handler
+      FunctionName: backup-assistant-amazon-rds-agent-handler
+      MemorySize: 1024
+      ReservedConcurrentExecutions: 5
+      Runtime: python3.13
+      Role: !GetAtt AgentHandlerLambdaFunctionExecutionRole.Arn
+      Timeout: 600
+      Environment:
+        Variables:
+          BOTO3_API_MAX_RESULTS: 100
+          DEFAULT_AWS_REGION: us-west-2
+          LLM_MODEL_OR_INFERENCE_PROFILE_ID: us.anthropic.claude-3-7-sonnet-20250219-v1:0
+          LOG_LEVEL: INFO
+          LOG_LLM_PROCESSING_INFO: True
+          SYSTEM_PROMPT_FILE_NAME: system_prompt_template.txt
+          SYSTEM_PROMPT_FOR_BOTO3_RETRY_FILE_NAME: system_prompt_template_for_boto3_retry.txt
+          USER_PROMPT_FILE_NAME: user_prompt_template.txt
+          USER_PROMPT_FOR_BOTO3_RETRY_FILE_NAME: user_prompt_template_for_boto3_retry.txt
+      Code:
+        S3Bucket:
+          Ref: DeploymentArtifactsS3BucketName
+        S3Key:
+          Ref: AmazonRDSAgentHandlerLambdaFunctionCodeS3FileKey
+      KmsKeyArn: !GetAtt BackupAssistantKey.Arn
+      VpcConfig:
+        SecurityGroupIds:
+          - !GetAtt SecurityGroup.GroupId
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+    DependsOn:
+      - BackupAssistantKey
+      - AgentHandlerLambdaFunctionExecutionRole
+      - SecurityGroup
+      - PrivateSubnet1
+      - PrivateSubnet2
+  BedrockAgentAccessToInvokeAmazonRDSAgentHandlerLambdaFunction:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt AmazonRDSAgentHandlerLambdaFunction.Arn
+      Principal: bedrock.amazonaws.com
+      SourceAccount:
+        Ref: AWS::AccountId
+    DependsOn:
+      - AmazonRDSAgentHandlerLambdaFunction
+
+  SubBedrockAgentExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Description: Bedrock Sub Agent execution role for backup-assistant
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - bedrock.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+              ArnLike:
+                "AWS:SourceArn": !Join [ "", [ "arn:aws:bedrock:", !Ref AWS::Region, ":", !Ref AWS::AccountId, ":agent/*" ] ]
+  SubBedrockAgentExecutionRolePolicy:
+    Type: 'AWS::IAM::RolePolicy'
+    Properties:
+      PolicyName: SubBedrockAgentExecutionRolePolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "ModelInferenceProfilePermissions"
+            Effect: Allow
+            Action:
+              - bedrock:GetInferenceProfile
+            Resource:
+              - !Join [ "", [ "arn:aws:bedrock:*:", !Ref AWS::AccountId, ":inference-profile/us.anthropic.claude-3-7-sonnet-20250219-v1:0" ] ]
+          - Sid: "ModelInvocationPermissions"
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:CreateModelInvocationJob
+            Resource:
+              - "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0"
+              - "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0"
+              - !Join [ "", [ "arn:aws:bedrock:*:", !Ref AWS::AccountId, ":inference-profile/us.anthropic.claude-3-7-sonnet-20250219-v1:0" ] ]
+      RoleName: !Ref SubBedrockAgentExecutionRole
+    DependsOn:
+      - SubBedrockAgentExecutionRole
+
+  AWSBackupPlannerBedrockAgent:
+    Type: 'AWS::Bedrock::Agent'
+    Properties:
+      AgentName: backup-assistant-aws-backup-planner
+      Description: Agent that will handle all AWS Backup planning related tasks.
+      AgentResourceRoleArn: !GetAtt SubBedrockAgentExecutionRole.Arn
+      ActionGroups:
+        - ActionGroupExecutor:
+            Lambda: !GetAtt AWSBackupAgentHandlerLambdaFunction.Arn
+          ActionGroupName: action-group-1
+          ActionGroupState: ENABLED
+          Description: Action Group to handle AWS Backup related actions.
+          FunctionSchema:
+            Functions:
+              - Description: Function to handle AWS Backup related actions. The input parameters to the function will be filled in based on the type of action.
+                Name: backup-assistant-aws-backup-agent-handler
+                Parameters:
+                  AWSRegion:
+                    Description: The AWS Region specified by the user.
+                    Required: true
+                    Type: string
+                  Boto3APIJSON:
+                    Description: The JSON text for the boto3 API.
+                    Required: false
+                    Type: string
+                  Boto3APIName:
+                    Description: The name of the boto3 API.
+                    Required: false
+                    Type: string
+      AutoPrepare: true
+      CustomerEncryptionKeyArn: !GetAtt BackupAssistantKey.Arn
+      FoundationModel: anthropic.claude-3-5-sonnet-20241022-v2:0
+      Instruction: |
+        You are an expert in AWS Backup. You will perform describe, get, and list operations based on user request. Follow the instructions mentioned in the <INSTRUCTIONS> tag and think step-by-step.
+
+        <INSTRUCTIONS>
+        1. For all the operations on the AWS Backup service, you will generate valid JSON text for the corresponding boto3 API. Do not generate any preamble, postamble, or explanation.
+        2. Prompt the user for the AWS Region if you do not have that value.
+        3. For listing backup vaults, generate the JSON text for the Backup.Client.list_backup_vaults(**kwargs) boto3 API.
+        4. For listing backup vaults, if the user provides one or more backup vault tags with a name and values, then, separate the values with a comma, and then, create this JSON {"BackupVaultTagName": "<the tag name from the user input>", "BackupVaultTagValues": "<comma separated tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "list_backup_vaults_for_tags".
+        5. For getting a backup vault, if the user provides the name of the backup vault, then, create this JSON {"BackupVaultName": "<backup vault name from the user input>", "BackupVaultArn": ""} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "get_backup_vault_using_name".
+        6. For getting a backup vault, if the user provides the ARN of the backup vault, then, create this JSON {"BackupVaultName": "", "BackupVaultArn": "<backup vault ARN from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "get_backup_vault_using_arn".
+        7. For listing backup jobs, generate the JSON text for the Backup.Client.list_backup_jobs(**kwargs) boto3 API.
+        8. For listing backup plans, generate the JSON text for the Backup.Client.list_backup_plans(**kwargs) boto3 API.
+        9. For listing backup plans, if the user provides one or more backup plan tags with a name and values, then, separate the values with a comma, and then, create this JSON {"BackupPlanTagName": "<the tag name from the user input>", "BackupPlanTagValues": "<comma separated tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "list_backup_plans_for_tags".
+        10. For getting a backup plan, generate the JSON text for the Backup.Client.get_backup_plan(**kwargs) boto3 API. Prompt the user for BackupPlanId if you do not have that value. Do not assume a value for BackupPlanId.
+        11. For getting a backup plan, if the user provides the name of the backup plan instead of the id, then, create this JSON {"BackupPlanName": "<backup plan name from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "get_backup_plan_using_name".
+        12. For listing backup selections, generate the JSON text for the Backup.Client.list_backup_selections(**kwargs) boto3 API. Prompt the user for BackupPlanId if you do not have value. Do not assume a value for BackupPlanId.
+        13. For listing backup selections, if the user provides the name of the backup plan instead of the id, then, create this JSON {"BackupPlanName": "<backup plan name from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "list_backup_selections_using_backup_plan_name".
+        14. For getting a backup selection, generate the JSON text for the Backup.Client.get_backup_selection(**kwargs) boto3 API. Prompt the user for BackupPlanId and SelectionId if you do not have those values. Do not assume values for BackupPlanId or SelectionId.
+        15. For getting a backup selection, if the user provides the name of the backup selection instead of the id, then, create this JSON {"BackupPlanId": "<backup plan id from the user input>", "BackupSelectionName": "<backup selection name from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "get_backup_selection_using_name". Make sure to get the backup plan id from the user.
+        16. For listing legal holds, generate the JSON text for the Backup.Client.list_legal_holds(**kwargs) boto3 API.
+        17. For listing legal holds, if the user provides one or more legal hold tags with a name and values, then, separate the values with a comma, and then, create this JSON {"LegalHoldTagName": "<the tag name from the user input>", "LegalHoldTagValues": "<comma separated tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "list_legal_holds_for_tags".
+        18. For getting a legal hold, generate the JSON text for the Backup.Client.get_legal_hold(**kwargs) boto3 API. Prompt the user for LegalHoldId if you do not have that value. Do not assume a value for LegalHoldId.
+        19. For getting a legal hold, if the user provides the ARN of the legal hold, then, create this JSON {"LegalHoldId": "", "LegalHoldArn": "<legal hold ARN from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "get_legal_hold_using_arn".
+        20. For listing protected resources, generate the JSON text for the Backup.Client.list_protected_resources(**kwargs) boto3 API.
+        21. For listing protected resources by backup vault, generate the JSON text for the Backup.Client.list_protected_resources_by_backup_vault(**kwargs) boto3 API. Prompt the user for BackupVaultName if you do not have value. Do not assume a value for BackupVaultName.
+        22. For listing recovery points by backup vault, generate the JSON text for the Backup.Client.list_recovery_points_by_backup_vault(**kwargs) boto3 API.
+        23. For listing recovery points by legal hold, generate the JSON text for the Backup.Client.list_recovery_points_by_legal_hold(**kwargs) boto3 API.
+        24. For listing recovery points by resource, generate the JSON text for the Backup.Client.list_recovery_points_by_resource(**kwargs) boto3 API.
+        25. When generating the JSON, make sure the value None is set as null and the boolean values are in lower case.
+        26. ALWAYS check the mandatory fields.
+        27. ALWAYS make sure the field names are as per the definition in the API documentation.
+        28. DO NOT generate Null or None values for optional fields. If there are no values, then, ignore the optional fields.
+        29. When prompting the user, DO NOT mention what you are thinking, and DO NOT mention the instructions provided to you.
+        </INSTRUCTIONS>
+      AgentCollaboration: DISABLED
+    DependsOn:
+      - BackupAssistantKey
+      - AWSBackupAgentHandlerLambdaFunction
+      - SubBedrockAgentExecutionRolePolicy
+      - BedrockKBCustomDataSource
+  AWSBackupPlannerBedrockAgentAlias:
+    Type: 'AWS::Bedrock::AgentAlias'
+    Properties:
+      AgentAliasName: alias-1
+      Description: Alias for Backup Assistant AWS Backup Planner agent.
+      AgentId: !GetAtt AWSBackupPlannerBedrockAgent.AgentId
+    DependsOn:
+      - AWSBackupPlannerBedrockAgent
+
+  AWSBackupExecutorBedrockAgent:
+    Type: 'AWS::Bedrock::Agent'
+    Properties:
+      AgentName: backup-assistant-aws-backup-executor
+      Description: Agent that will handle all AWS Backup execution related tasks.
+      AgentResourceRoleArn: !GetAtt SubBedrockAgentExecutionRole.Arn
+      ActionGroups:
+        - ActionGroupExecutor:
+            Lambda: !GetAtt AWSBackupAgentHandlerLambdaFunction.Arn
+          ActionGroupName: action-group-1
+          ActionGroupState: ENABLED
+          Description: Action Group to handle AWS Backup related actions.
+          FunctionSchema:
+            Functions:
+              - Description: Function to handle AWS Backup related actions. The input parameters to the function will be filled in based on the type of action.
+                Name: backup-assistant-aws-backup-agent-handler
+                Parameters:
+                  AWSRegion:
+                    Description: The AWS Region specified by the user.
+                    Required: true
+                    Type: string
+                  Boto3APIJSON:
+                    Description: The JSON text for the boto3 API.
+                    Required: false
+                    Type: string
+                  Boto3APIName:
+                    Description: The name of the boto3 API.
+                    Required: false
+                    Type: string
+      AutoPrepare: true
+      CustomerEncryptionKeyArn: !GetAtt BackupAssistantKey.Arn
+      FoundationModel: anthropic.claude-3-5-sonnet-20241022-v2:0
+      Instruction: |
+        You are an expert in AWS Backup. You will perform create, update, cancel, and delete operations based on user request. Follow the instructions mentioned in the <INSTRUCTIONS> tag and think step-by-step.
+
+        <INSTRUCTIONS>
+        1. For all the operations, you will generate valid JSON text for the corresponding boto3 API. Do not generate any preamble, postamble, or explanation.
+        2. For all delete operations, ALWAYS ask the user for confirmation before proceeding.
+        3. Prompt the user for the AWS Region if you do not have that value.
+        4. For creating a backup vault, generate the JSON text for the Backup.Client.create_backup_vault(**kwargs) boto3 API.
+        5. For creating a logically air gapped backup vault, generate the JSON text for the Backup.Client.create_logically_air_gapped_backup_vault(**kwargs) boto3 API.
+        6. For deleting a backup vault, if the user provides the name of the backup vault, then, create this JSON {"BackupVaultName": "<backup vault name from the user input>", "BackupVaultArn": ""} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "delete_backup_vault_using_name".
+        7. For deleting a backup vault, if the user provides the ARN of the backup vault, then, create this JSON {"BackupVaultName": "", "BackupVaultArn": "<backup vault ARN from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "delete_backup_vault_using_arn".
+        8. For creating a backup plan, generate the JSON text for the Backup.Client.create_backup_plan(**kwargs) boto3 API.
+        9. For updating a backup plan, generate the JSON text for the Backup.Client.update_backup_plan(**kwargs) boto3 API. Prompt the user for BackupPlanId if you do not have that value. Do not assume a value for BackupPlanId.
+        10. For deleting a backup plan, generate the JSON text for the Backup.Client.delete_backup_plan(**kwargs) boto3 API. Prompt the user for BackupPlanId if you do not have that value. Do not assume a value for BackupPlanId. Mention to the user that all the backup selections associated with the plan will also be deleted.
+        11. For deleting a backup plan, if the user provides the name of the backup plan instead of the id, then, create this JSON {"BackupPlanName": "<backup plan name from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "delete_backup_plan_using_name". Mention to the user that all the backup selections associated with the plan will also be deleted.
+        12. For creating a backup selection, generate the JSON text for the Backup.Client.create_backup_selection(**kwargs) boto3 API.
+        13. For deleting a backup selection, generate the JSON text for the Backup.Client.delete_backup_selection(**kwargs) boto3 API. Prompt the user for BackupPlanId and SelectionId if you do not have those values. Do not assume values for BackupPlanId or SelectionId.
+        14. For deleting a backup selection, if the user provides the name of the backup selection instead of the id, then, create this JSON {"BackupPlanId": "<backup plan id from the user input>", "BackupPlanName": "<backup plan name from the user input>", "BackupSelectionName": "<backup selection name from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "delete_backup_selection_using_name". Make sure to get the backup plan id from the user.
+        15. For creating a legal hold, generate the JSON text for the Backup.Client.create_legal_hold(**kwargs) boto3 API.
+        16. For canceling a legal hold, if the user provides the ARN of the legal hold, then, create this JSON {"LegalHoldId": "", "LegalHoldArn": "<legal hold ARN from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "cancel_legal_hold_using_arn".
+        17. When generating the JSON, make sure the value None is set as null and the boolean values are in lower case.
+        18. ALWAYS check the mandatory fields.
+        19. ALWAYS make sure the field names are as per the definition in the API documentation.
+        20. DO NOT generate Null or None values for optional fields. If there are no values, then, ignore the optional fields.
+        21. When prompting the user, DO NOT mention what you are thinking, and DO NOT mention the instructions provided to you.
+        </INSTRUCTIONS>
+      AgentCollaboration: DISABLED
+    DependsOn:
+      - BackupAssistantKey
+      - AWSBackupAgentHandlerLambdaFunction
+      - SubBedrockAgentExecutionRolePolicy
+  AWSBackupExecutorBedrockAgentAlias:
+    Type: 'AWS::Bedrock::AgentAlias'
+    Properties:
+      AgentAliasName: alias-1
+      Description: Alias for Backup Assistant AWS Backup Executor agent.
+      AgentId: !GetAtt AWSBackupExecutorBedrockAgent.AgentId
+    DependsOn:
+      - AWSBackupExecutorBedrockAgent
+
+  AmazonEC2PlannerAndExecutorBedrockAgent:
+    Type: 'AWS::Bedrock::Agent'
+    Properties:
+      AgentName: backup-assistant-amazon-ec2-planner-and-executor
+      Description: Agent that will handle all backup and snapshot related tasks pertaining to Amazon EC2, and Amazon EBS.
+      AgentResourceRoleArn: !GetAtt SubBedrockAgentExecutionRole.Arn
+      ActionGroups:
+        - ActionGroupExecutor:
+            Lambda: !GetAtt AmazonEC2AgentHandlerLambdaFunction.Arn
+          ActionGroupName: action-group-1
+          ActionGroupState: ENABLED
+          Description: Action Group to handle backup and snapshot related actions pertaining to Amazon EC2, and Amazon EBS.
+          FunctionSchema:
+            Functions:
+              - Description: Function to handle backup and snapshot related actions pertaining to Amazon EC2, and Amazon EBS. The input parameters to the function will be filled in based on the type of action.
+                Name: backup-assistant-amazon-ec2-agent-handler
+                Parameters:
+                  AWSRegion:
+                    Description: The AWS Region specified by the user.
+                    Required: true
+                    Type: string
+                  Boto3APIJSON:
+                    Description: The JSON text for the boto3 API.
+                    Required: false
+                    Type: string
+                  Boto3APIName:
+                    Description: The name of the boto3 API.
+                    Required: false
+                    Type: string
+      AutoPrepare: true
+      CustomerEncryptionKeyArn: !GetAtt BackupAssistantKey.Arn
+      FoundationModel: anthropic.claude-3-5-sonnet-20241022-v2:0
+      Instruction: |
+        You are an expert in backups and snapshots pertaining to Amazon EC2, and Amazon EBS. You will perform describe, get, list, create, update, cancel, and delete operations based on user request. Follow the instructions mentioned in the <INSTRUCTIONS> tag and think step-by-step.
+
+        <INSTRUCTIONS>
+        1. For all the operations on the Amazon EC2, and Amazon EBS services, you will generate valid JSON text for the corresponding boto3 API. Do not generate any preamble, postamble, or explanation.
+        2. Prompt the user for the AWS Region if you do not have that value.
+        3. For listing instances for all Amazon EC2 instances, create this JSON {"InstanceIds": "*"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_instances_for_all_instances".
+        4. For listing instances for Amazon EC2 instances, if the user provides one or more instance ids, then, separate them with a comma, and then, create this JSON {"InstanceIds": "<comma separated instance ids from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_instances_for_instance_ids".
+        5. For listing instances for Amazon EC2 instances, if the user provides one or more instance names, then, separate them with a comma, and then, create this JSON {"InstanceNames": "<comma separated instance names from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_instances_for_instance_names".
+        6. For listing instances for Amazon EC2 instances, if the user provides one or more instance tags with a name and values, then, separate the values with a comma, and then, create this JSON {"InstanceTagName": "<the tag name from the user input>", "InstanceTagValues": "<comma separated instance tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_instances_for_instance_tags".
+        7. For listing volumes for all Amazon EC2 instances or for all Amazon EBS volumes, create this JSON {"VolumeIds": "*"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_volumes_for_all_volumes".
+        8. For listing volumes for Amazon EC2 instances, if the user provides one or more instance ids, then, separate them with a comma, and then, create this JSON {"InstanceIds": "<comma separated instance ids from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_volumes_for_instance_ids".
+        9. For listing volumes for Amazon EC2 instances, if the user provides one or more instance names, then, separate them with a comma, and then, create this JSON {"InstanceNames": "<comma separated instance names from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_volumes_for_instance_names".
+        10. For listing volumes for Amazon EC2 instances, if the user provides one or more instance tags with a name and values, then, separate the values with a comma, and then, create this JSON {"InstanceTagName": "<the tag name from the user input>", "InstanceTagValues": "<comma separated tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_volumes_for_instance_tags".
+        11. For listing volumes for Amazon EC2 instances, if the user provides one or more volume ids, then, separate them with a comma, and then, create this JSON {"VolumeIds": "<comma separated volume ids from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_volumes_for_volume_ids".
+        12. For listing volumes for Amazon EC2 instances, if the user provides one or more volume names, then, separate them with a comma, and then, create this JSON {"VolumeNames": "<comma separated volume names from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_volumes_for_volume_names".
+        13. For listing volumes for Amazon EC2 instances, if the user provides one or more volume tags with a name and values, then, separate the values with a comma, and then, create this JSON {"VolumeTagName": "<the tag name from the user input>", "VolumeTagValues": "<comma separated tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_volumes_for_volume_tags".
+        14. For listing snapshots for all Amazon EC2 instances or for all Amazon EBS volumes or for all Amazon EBS snapshots, create this JSON {"SnapshotIds": "*"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_snapshots_for_all_snapshots".
+        15. For listing snapshots for Amazon EC2 instances, if the user provides one or more instance ids, then, separate them with a comma, and then, create this JSON {"InstanceIds": "<comma separated instance ids from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_snapshots_for_instance_ids".
+        16. For listing snapshots for Amazon EC2 instances, if the user provides one or more instance names, then, separate them with a comma, and then, create this JSON {"InstanceNames": "<comma separated instance names from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_snapshots_for_instance_names".
+        17. For listing snapshots for Amazon EC2 instances, if the user provides one or more instance tags with a name and values, then, separate the values with a comma, and then, create this JSON {"InstanceTagName": "<the tag name from the user input>", "InstanceTagValues": "<comma separated instance tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_snapshots_for_instance_tags".
+        18. For listing snapshots for Amazon EC2 instances, if the user provides one or more snapshot ids, then, separate them with a comma, and then, create this JSON {"SnapshotIds": "<comma separated snapshot ids from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_snapshots_for_snapshot_ids".
+        19. For listing snapshots for Amazon EC2 instances, if the user provides one or more snapshot names, then, separate them with a comma, and then, create this JSON {"SnapshotNames": "<comma separated snapshot names from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_snapshots_for_snapshot_names".
+        20. For listing snapshots for Amazon EC2 instances, if the user provides one or more snapshot tags with a name and values, then, separate the values with a comma, and then, create this JSON {"SnapshotTagName": "<the tag name from the user input>", "SnapshotTagValues": "<comma separated tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_snapshots_for_snapshot_tags".
+        21. For listing snapshots for Amazon EC2 instances, if the user provides one or more volume ids, then, separate them with a comma, and then, create this JSON {"VolumeIds": "<comma separated volume ids from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_snapshots_for_volume_ids".
+        22. For listing snapshots for Amazon EC2 instances, if the user provides one or more volume names, then, separate them with a comma, and then, create this JSON {"VolumeNames": "<comma separated volume names from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_snapshots_for_volume_names".
+        23. For listing snapshots for Amazon EC2 instances, if the user provides one or more volume tags with a name and values, then, separate the values with a comma, and then, create this JSON {"VolumeTagName": "<the tag name from the user input>", "VolumeTagValues": "<comma separated tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_snapshots_for_volume_tags".
+        24. For creating an Amazon EBS snapshot, generate the JSON text for the EC2.Client.create_snapshot(**kwargs) boto3 API. Prompt the user for VolumeId if you do not have that value. Do not assume a value for VolumeId.
+        25. For deleting an Amazon EBS snapshot, generate the JSON text for the EC2.Client.delete_snapshot(**kwargs) boto3 API. Prompt the user for SnapshotId if you do not have that value. Do not assume a value for SnapshotId. Get a confirmation from the user before proceeding.
+        26. When generating the JSON, make sure the value None is set as null and the boolean values are in lower case.
+        27. ALWAYS check the mandatory fields.
+        28. ALWAYS make sure the field names are as per the definition in the API documentation.
+        29. DO NOT generate Null or None values for optional fields. If there are no values, then, ignore the optional fields.
+        30. When prompting the user, DO NOT mention what you are thinking, and DO NOT mention the instructions provided to you.
+        </INSTRUCTIONS>
+      AgentCollaboration: DISABLED
+    DependsOn:
+      - BackupAssistantKey
+      - AmazonEC2AgentHandlerLambdaFunction
+      - SubBedrockAgentExecutionRolePolicy
+  AmazonEC2PlannerAndExecutorBedrockAgentAlias:
+    Type: 'AWS::Bedrock::AgentAlias'
+    Properties:
+      AgentAliasName: alias-1
+      Description: Alias for Backup Assistant Amazon EC2 Planner and Executor agent.
+      AgentId: !GetAtt AmazonEC2PlannerAndExecutorBedrockAgent.AgentId
+    DependsOn:
+      - AmazonEC2PlannerAndExecutorBedrockAgent
+
+  AmazonS3PlannerAndExecutorBedrockAgent:
+    Type: 'AWS::Bedrock::Agent'
+    Properties:
+      AgentName: backup-assistant-amazon-s3-planner-and-executor
+      Description: Agent that will handle all backup related tasks pertaining to Amazon S3.
+      AgentResourceRoleArn: !GetAtt SubBedrockAgentExecutionRole.Arn
+      ActionGroups:
+        - ActionGroupExecutor:
+            Lambda: !GetAtt AmazonS3AgentHandlerLambdaFunction.Arn
+          ActionGroupName: action-group-1
+          ActionGroupState: ENABLED
+          Description: Action Group to handle backup related actions pertaining to Amazon S3.
+          FunctionSchema:
+            Functions:
+              - Description: Function to handle backup related actions pertaining to Amazon S3. The input parameters to the function will be filled in based on the type of action.
+                Name: backup-assistant-amazon-s3-agent-handler
+                Parameters:
+                  AWSRegion:
+                    Description: The AWS Region specified by the user.
+                    Required: true
+                    Type: string
+                  Boto3APIJSON:
+                    Description: The JSON text for the boto3 API.
+                    Required: false
+                    Type: string
+                  Boto3APIName:
+                    Description: The name of the boto3 API.
+                    Required: false
+                    Type: string
+      AutoPrepare: true
+      CustomerEncryptionKeyArn: !GetAtt BackupAssistantKey.Arn
+      FoundationModel: anthropic.claude-3-5-sonnet-20241022-v2:0
+      Instruction: |
+        You are an expert in Amazon S3. You will perform describe, get, list, create, update, cancel, and delete operations based on user request. Follow the instructions mentioned in the <INSTRUCTIONS> tag and think step-by-step.
+
+        <INSTRUCTIONS>
+        1. For all the operations on the Amazon S3 service, you will generate valid JSON text for the corresponding boto3 API. Do not generate any preamble, postamble, or explanation.
+        2. Prompt the user for the AWS Region if you do not have that value.
+        3. For listing the Amazon S3 buckets, if the user provides one or more AWS Region names, then, separate them with a comma, and then, create this JSON {"RegionNames": "<comma separated AWS Region names from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "list_buckets_by_regions". Make sure to translate the user specified region names to standardized AWS Region names. For example, N.Virginia should be translated to us-east-1, Oregon should be translated to us-west-2 etc. If the user mentions all regions, then, create this JSON {"RegionNames": ""} and pass it in the Boto3APIJSON parameter to the action group.
+        4. For listing the Amazon S3 buckets, if the user provides one or more AWS Region names and one or more bucket tags with a name and values, then, separate them with a comma, and then, create this JSON {"RegionNames": "<comma separated AWS Region names from the user input>", "BucketTagName": "<the tag name from the user input>", "BucketTagValues": "<comma separated tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "list_buckets_by_regions_and_tags". Make sure to translate the user specified region names to standardized AWS Region names. For example, N.Virginia should be translated to us-east-1, Oregon should be translated to us-west-2 etc. If the user mentions all regions, then, create this JSON {"RegionNames": ""} and pass it in the Boto3APIJSON parameter to the action group.
+        5. For getting the replication information on a bucket, generate the JSON text for the S3.Client.get_bucket_replication(**kwargs) boto3 API. Prompt the user for Bucket if you do not have that value. Do not assume a value for Bucket.
+        6. For getting the versioning information on a bucket, generate the JSON text for the S3.Client.get_bucket_versioning(**kwargs) boto3 API. Prompt the user for Bucket if you do not have that value. Do not assume a value for Bucket.
+        7. For getting the lifecyle configuration on a bucket, generate the JSON text for the S3.Client.get_bucket_lifecycle_configuration(**kwargs) boto3 API. Prompt the user for Bucket if you do not have that value. Do not assume a value for Bucket.
+        8. When generating the JSON, make sure the value None is set as null and the boolean values are in lower case.
+        9. ALWAYS check the mandatory fields.
+        10. ALWAYS make sure the field names are as per the definition in the API documentation.
+        11. DO NOT generate Null or None values for optional fields. If there are no values, then, ignore the optional fields.
+        12. When prompting the user, DO NOT mention what you are thinking, and DO NOT mention the instructions provided to you.
+        </INSTRUCTIONS>
+      AgentCollaboration: DISABLED
+    DependsOn:
+      - BackupAssistantKey
+      - AmazonS3AgentHandlerLambdaFunction
+      - SubBedrockAgentExecutionRolePolicy
+  AmazonS3PlannerAndExecutorBedrockAgentAlias:
+    Type: 'AWS::Bedrock::AgentAlias'
+    Properties:
+      AgentAliasName: alias-1
+      Description: Alias for Backup Assistant Amazon S3 Planner and Executor agent.
+      AgentId: !GetAtt AmazonS3PlannerAndExecutorBedrockAgent.AgentId
+    DependsOn:
+      - AmazonS3PlannerAndExecutorBedrockAgent
+
+  AmazonRDSPlannerAndExecutorBedrockAgent:
+    Type: 'AWS::Bedrock::Agent'
+    Properties:
+      AgentName: backup-assistant-amazon-rds-planner-and-executor
+      Description: Agent that will handle all backup related tasks pertaining to Amazon RDS.
+      AgentResourceRoleArn: !GetAtt SubBedrockAgentExecutionRole.Arn
+      ActionGroups:
+        - ActionGroupExecutor:
+            Lambda: !GetAtt AmazonRDSAgentHandlerLambdaFunction.Arn
+          ActionGroupName: action-group-1
+          ActionGroupState: ENABLED
+          Description: Action Group to handle backup related actions pertaining to Amazon RDS.
+          FunctionSchema:
+            Functions:
+              - Description: Function to handle backup related actions pertaining to Amazon RDS. The input parameters to the function will be filled in based on the type of action.
+                Name: backup-assistant-amazon-rds-agent-handler
+                Parameters:
+                  AWSRegion:
+                    Description: The AWS Region specified by the user.
+                    Required: true
+                    Type: string
+                  Boto3APIJSON:
+                    Description: The JSON text for the boto3 API.
+                    Required: false
+                    Type: string
+                  Boto3APIName:
+                    Description: The name of the boto3 API.
+                    Required: false
+                    Type: string
+      AutoPrepare: true
+      CustomerEncryptionKeyArn: !GetAtt BackupAssistantKey.Arn
+      FoundationModel: anthropic.claude-3-5-sonnet-20241022-v2:0
+      Instruction: |
+        You are an expert in Amazon RDS. You will perform describe, get, list, create, update, cancel, and delete operations based on user request. Follow the instructions mentioned in the <INSTRUCTIONS> tag and think step-by-step.
+
+        <INSTRUCTIONS>
+        1. For all the operations on the Amazon RDS service, you will generate valid JSON text for the corresponding boto3 API. Do not generate any preamble, postamble, or explanation.
+        2. Prompt the user for the AWS Region if you do not have that value.
+        3. For listing the Amazon RDS database clusters, generate the JSON text for the RDS.Client.describe_db_clusters(**kwargs) boto3 API.
+        4. For listing Amazon RDS database clusters, if the user provides one or more cluster names, then, separate them with a comma, and then, create this JSON {"ClusterNames": "<comma separated cluster names from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_db_clusters_for_cluster_names".
+        5. For listing Amazon RDS database clusters, if the user provides one or more cluster tags with a name and values, then, separate the values with a comma, and then, create this JSON {"ClusterTagName": "<the tag name from the user input>", "ClusterTagValues": "<comma separated tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_db_clusters_for_cluster_tags".
+        6. For listing the Amazon RDS database instances, generate the JSON text for the RDS.Client.describe_db_instances(**kwargs) boto3 API.
+        7. For listing Amazon RDS database instances, if the user provides one or more instance names, then, separate them with a comma, and then, create this JSON {"InstanceNames": "<comma separated instance names from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_db_instances_for_instance_names".
+        8. For listing Amazon RDS database instances, if the user provides one or more instance tags with a name and values, then, separate the values with a comma, and then, create this JSON {"InstanceTagName": "<the tag name from the user input>", "InstanceTagValues": "<comma separated tag values from the user input>"} and pass it in the Boto3APIJSON parameter to the action group. And set Boto3APIName parameter to "describe_db_instances_for_instance_tags".
+        9. For listing the Amazon RDS database cluster automated backups, generate the JSON text for the RDS.Client.describe_db_cluster_automated_backups(**kwargs) boto3 API.
+        10. For listing the Amazon RDS database instance automated backups, generate the JSON text for the RDS.Client.describe_db_instance_automated_backups(**kwargs) boto3 API.
+        11. For starting an Amazon RDS database instance automated backup replication, generate the JSON text for the RDS.Client.start_db_instance_automated_backups_replication(**kwargs) boto3 API. Prompt the user for SourceDBInstanceArn if you do not have that value. Do not assume a value for SourceDBInstanceArn.
+        12. For stopping an Amazon RDS database instance automated backup replication, generate the JSON text for the RDS.Client.stop_db_instance_automated_backups_replication(**kwargs) boto3 API. Prompt the user for SourceDBInstanceArn if you do not have that value. Do not assume a value for SourceDBInstanceArn.
+        13. For deleting an Amazon RDS database cluster automated backup, generate the JSON text for the RDS.Client.delete_db_cluster_automated_backup(**kwargs) boto3 API. Prompt the user for DbClusterResourceId if you do not have that value. Do not assume a value for DbClusterResourceId. Get a confirmation from the user before proceeding.
+        14. For deleting an Amazon RDS database instance automated backup, generate the JSON text for the RDS.Client.delete_db_instance_automated_backup(**kwargs) boto3 API. Prompt the user for DbiResourceId if you do not have that value. Do not assume a value for DbiResourceId. Get a confirmation from the user before proceeding.
+        15. When generating the JSON, make sure the value None is set as null and the boolean values are in lower case.
+        16. ALWAYS check the mandatory fields.
+        17. ALWAYS make sure the field names are as per the definition in the API documentation.
+        18. DO NOT generate Null or None values for optional fields. If there are no values, then, ignore the optional fields.
+        19. When prompting the user, DO NOT mention what you are thinking, and DO NOT mention the instructions provided to you.
+        </INSTRUCTIONS>
+      AgentCollaboration: DISABLED
+    DependsOn:
+      - BackupAssistantKey
+      - AmazonRDSAgentHandlerLambdaFunction
+      - SubBedrockAgentExecutionRolePolicy
+  AmazonRDSPlannerAndExecutorBedrockAgentAlias:
+    Type: 'AWS::Bedrock::AgentAlias'
+    Properties:
+      AgentAliasName: alias-1
+      Description: Alias for Backup Assistant Amazon RDS Planner and Executor agent.
+      AgentId: !GetAtt AmazonRDSPlannerAndExecutorBedrockAgent.AgentId
+    DependsOn:
+      - AmazonRDSPlannerAndExecutorBedrockAgent
+
+  SubSupervisorBedrockAgentExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Description: Bedrock Sub Supervisor Agent execution role for backup-assistant
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - bedrock.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+              ArnLike:
+                "AWS:SourceArn": !Join [ "", [ "arn:aws:bedrock:", !Ref AWS::Region, ":", !Ref AWS::AccountId, ":agent/*" ] ]
+  SubSupervisorBedrockAgentExecutionRolePolicy:
+    Type: 'AWS::IAM::RolePolicy'
+    Properties:
+      PolicyName: SubSupervisorBedrockAgentExecutionRolePolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "ModelInferenceProfilePermissions"
+            Effect: Allow
+            Action:
+              - bedrock:GetInferenceProfile
+            Resource:
+              - !Join [ "", [ "arn:aws:bedrock:*:", !Ref AWS::AccountId, ":inference-profile/us.anthropic.claude-3-7-sonnet-20250219-v1:0" ] ]
+          - Sid: "ModelInvocationPermissions"
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:CreateModelInvocationJob
+            Resource:
+              - "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0"
+              - "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0"
+              - !Join [ "", [ "arn:aws:bedrock:*:", !Ref AWS::AccountId, ":inference-profile/us.anthropic.claude-3-7-sonnet-20250219-v1:0" ] ]
+          - Sid: "SubAgentInvocationPermissions"
+            Effect: Allow
+            Action:
+              - bedrock:GetAgentAlias
+              - bedrock:InvokeAgent
+            Resource:
+              - !GetAtt AWSBackupPlannerBedrockAgentAlias.AgentAliasArn
+              - !GetAtt AWSBackupExecutorBedrockAgentAlias.AgentAliasArn
+          - Sid: "SubAgentKMSPermissions"
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource:
+              - !GetAtt BackupAssistantKey.Arn
+      RoleName: !Ref SubSupervisorBedrockAgentExecutionRole
+    DependsOn:
+      - BackupAssistantKey
+      - SubSupervisorBedrockAgentExecutionRole
+      - BedrockKB
+      - AWSBackupPlannerBedrockAgentAlias
+      - AWSBackupExecutorBedrockAgentAlias
+
+  AWSBackupPlannerAndExecutorBedrockAgent:
+    Type: 'AWS::Bedrock::Agent'
+    Properties:
+      AgentName: backup-assistant-aws-backup-planner-and-executor
+      Description: Agent that will handle all tasks pertaining to AWS Backup.
+      AgentResourceRoleArn: !GetAtt SubSupervisorBedrockAgentExecutionRole.Arn
+      AutoPrepare: true
+      CustomerEncryptionKeyArn: !GetAtt BackupAssistantKey.Arn
+      FoundationModel: anthropic.claude-3-5-haiku-20241022-v1:0
+      Instruction: You are an expert in the AWS Backup service. You will perform describe, get, list, create, update, cancel, and delete operations based on user request.
+      AgentCollaboration: SUPERVISOR_ROUTER
+      AgentCollaborators:
+        - AgentDescriptor:
+            AliasArn: !GetAtt AWSBackupPlannerBedrockAgentAlias.AgentAliasArn
+          CollaboratorName: backup-assistant-aws-backup-planner-collaborator
+          CollaborationInstruction: You can invoke this agent to perform describe, get, and list operations on the AWS Backup service based on user request.
+          RelayConversationHistory: TO_COLLABORATOR
+        - AgentDescriptor:
+            AliasArn: !GetAtt AWSBackupExecutorBedrockAgentAlias.AgentAliasArn
+          CollaboratorName: backup-assistant-aws-backup-executor-collaborator
+          CollaborationInstruction: You can invoke this agent to perform create, update, and delete operations on the AWS Backup service based on user request.
+          RelayConversationHistory: TO_COLLABORATOR
+    DependsOn:
+      - BackupAssistantKey
+      - SubSupervisorBedrockAgentExecutionRolePolicy
+  AWSBackupPlannerAndExecutorBedrockAgentAlias:
+    Type: 'AWS::Bedrock::AgentAlias'
+    Properties:
+      AgentAliasName: alias-1
+      Description: Alias for Backup Assistant AWS Backup Planner And Executor agent.
+      AgentId: !GetAtt AWSBackupPlannerAndExecutorBedrockAgent.AgentId
+    DependsOn:
+      - AWSBackupPlannerAndExecutorBedrockAgent
+
+  KnowledgeAgentExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Description: Knowledge Agent execution role for backup-assistant
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - bedrock.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+              ArnLike:
+                "AWS:SourceArn": !Join [ "", [ "arn:aws:bedrock:", !Ref AWS::Region, ":", !Ref AWS::AccountId, ":agent/*" ] ]
+  KnowledgeAgentExecutionRolePolicy:
+    Type: 'AWS::IAM::RolePolicy'
+    Properties:
+      PolicyName: KnowledgeAgentExecutionRolePolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "ModelInferenceProfilePermissions"
+            Effect: Allow
+            Action:
+              - bedrock:GetInferenceProfile
+            Resource:
+              - !Join [ "", [ "arn:aws:bedrock:*:", !Ref AWS::AccountId, ":inference-profile/us.anthropic.claude-3-7-sonnet-20250219-v1:0" ] ]
+          - Sid: "ModelInvocationPermissions"
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:CreateModelInvocationJob
+            Resource:
+              - "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0"
+              - "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0"
+              - !Join [ "", [ "arn:aws:bedrock:*:", !Ref AWS::AccountId, ":inference-profile/us.anthropic.claude-3-7-sonnet-20250219-v1:0" ] ]
+          - Sid: "KnowledgeBaseQueryPermissions"
+            Effect: Allow
+            Action:
+              - bedrock:Retrieve
+              - bedrock:RetrieveAndGenerate
+            Resource:
+              - !Join [ "", [ "arn:aws:bedrock:", !Ref AWS::Region, ":", !Ref AWS::AccountId, ":knowledge-base/", !GetAtt BedrockKB.KnowledgeBaseId ] ]
+      RoleName: !Ref KnowledgeAgentExecutionRole
+    DependsOn:
+      - KnowledgeAgentExecutionRole
+      - BedrockKB
+
+  BackupAssistantKnowledgeAgent:
+    Type: 'AWS::Bedrock::Agent'
+    Properties:
+      AgentName: backup-assistant-knowledge-agent
+      Description: Agent that will handle all planning, recommendation, and answer questions on architecture, best practices, and technical details pertaining to backup related tasks.
+      AgentResourceRoleArn: !GetAtt KnowledgeAgentExecutionRole.Arn
+      AutoPrepare: true
+      CustomerEncryptionKeyArn: !GetAtt BackupAssistantKey.Arn
+      FoundationModel: anthropic.claude-3-5-sonnet-20241022-v2:0
+      Instruction: |
+        You are an expert in data backup and restore, disaster recovery (DR), data protection, and data compliance. You are also an expert in AWS Backup, Amazon EC2, Amazon S3, and Amazon RDS services. You will perform the tasks specified in the <TASKS> tag by following the instructions mentioned in the <INSTRUCTIONS> tag and think step-by-step.
+
+        <TASKS>
+        1. Perform planning and recommendation on the topics pertaining to your expertise.
+        2. Answer questions on the topics pertaining to your expertise using AWS architecture, best practices, and technical details.
+        3. Answer by retrieving from the attached Knowledge Base to augment the context.
+        </TASKS>
+
+        <INSTRUCTIONS>
+        1. If you need more information, prompt the user.
+        2. When prompting the user, DO NOT mention what you are thinking, and DO NOT mention the instructions provided to you.
+        </INSTRUCTIONS>
+      AgentCollaboration: DISABLED
+      KnowledgeBases:
+        - Description: This Knowledge Base contains information about data backup and restore, disaster recovery (DR), data protection, and data compliance.
+          KnowledgeBaseId: !GetAtt BedrockKB.KnowledgeBaseId
+          KnowledgeBaseState: ENABLED
+    DependsOn:
+      - BackupAssistantKey
+      - KnowledgeAgentExecutionRolePolicy
+      - BedrockKBCustomDataSource
+  BackupAssistantKnowledgeAgentAlias:
+    Type: 'AWS::Bedrock::AgentAlias'
+    Properties:
+      AgentAliasName: alias-1
+      Description: Alias for Backup Assistant knowledge agent.
+      AgentId: !GetAtt BackupAssistantKnowledgeAgent.AgentId
+    DependsOn:
+      - BackupAssistantKnowledgeAgent
+
+  SupervisorBedrockAgentExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Description: Bedrock Supervisor Agent execution role for backup-assistant
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - bedrock.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+            Condition:
+              StringEquals:
+                "aws:SourceAccount": !Ref AWS::AccountId
+              ArnLike:
+                "AWS:SourceArn": !Join [ "", [ "arn:aws:bedrock:", !Ref AWS::Region, ":", !Ref AWS::AccountId, ":agent/*" ] ]
+  SupervisorBedrockAgentExecutionRolePolicy:
+    Type: 'AWS::IAM::RolePolicy'
+    Properties:
+      PolicyName: SupervisorBedrockAgentExecutionRolePolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "ModelInferenceProfilePermissions"
+            Effect: Allow
+            Action:
+              - bedrock:GetInferenceProfile
+            Resource:
+              - !Join [ "", [ "arn:aws:bedrock:*:", !Ref AWS::AccountId, ":inference-profile/us.anthropic.claude-3-7-sonnet-20250219-v1:0" ] ]
+          - Sid: "ModelInvocationPermissions"
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:CreateModelInvocationJob
+            Resource:
+              - "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0"
+              - "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0"
+              - !Join [ "", [ "arn:aws:bedrock:*:", !Ref AWS::AccountId, ":inference-profile/us.anthropic.claude-3-7-sonnet-20250219-v1:0" ] ]
+          - Sid: "SubAgentInvocationPermissions"
+            Effect: Allow
+            Action:
+              - bedrock:GetAgentAlias
+              - bedrock:InvokeAgent
+            Resource:
+              - !GetAtt AWSBackupPlannerAndExecutorBedrockAgentAlias.AgentAliasArn
+              - !GetAtt AmazonEC2PlannerAndExecutorBedrockAgentAlias.AgentAliasArn
+              - !GetAtt AmazonS3PlannerAndExecutorBedrockAgentAlias.AgentAliasArn
+              - !GetAtt AmazonRDSPlannerAndExecutorBedrockAgentAlias.AgentAliasArn
+              - !GetAtt BackupAssistantKnowledgeAgentAlias.AgentAliasArn
+          - Sid: "SubAgentKMSPermissions"
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource:
+              - !GetAtt BackupAssistantKey.Arn
+      RoleName: !Ref SupervisorBedrockAgentExecutionRole
+    DependsOn:
+      - BackupAssistantKey
+      - SupervisorBedrockAgentExecutionRole
+      - BedrockKB
+      - AWSBackupPlannerAndExecutorBedrockAgentAlias
+      - AmazonEC2PlannerAndExecutorBedrockAgentAlias
+      - AmazonS3PlannerAndExecutorBedrockAgentAlias
+      - AmazonRDSPlannerAndExecutorBedrockAgentAlias
+      - BackupAssistantKnowledgeAgentAlias
+
+  BackupAssistantSupervisorBedrockAgent:
+    Type: 'AWS::Bedrock::Agent'
+    Properties:
+      AgentName: backup-assistant-supervisor
+      Description: Agent that will supervise the back assistant tasks.
+      AgentResourceRoleArn: !GetAtt SupervisorBedrockAgentExecutionRole.Arn
+      AutoPrepare: true
+      CustomerEncryptionKeyArn: !GetAtt BackupAssistantKey.Arn
+      FoundationModel: anthropic.claude-3-5-sonnet-20241022-v2:0
+      Instruction: You are an expert in data backup who orchestrates from planning to execution.
+      AgentCollaboration: SUPERVISOR_ROUTER
+      AgentCollaborators:
+        - AgentDescriptor:
+            AliasArn: !GetAtt BackupAssistantKnowledgeAgentAlias.AgentAliasArn
+          CollaboratorName: backup-assistant-knowledge-agent-collaborator
+          CollaborationInstruction: |
+            You can invoke this agent to perform the following tasks pertaining to data backup and restore, disaster recovery (DR), data protection, data compliance, AWS Backup, Amazon EC2, Amazon S3, and Amazon RDS services based on user request.
+            1. Planning and recommendation.
+            2. Answer questions related to architecture, best practices, and technical details.
+          RelayConversationHistory: TO_COLLABORATOR
+        - AgentDescriptor:
+            AliasArn: !GetAtt AWSBackupPlannerAndExecutorBedrockAgentAlias.AgentAliasArn
+          CollaboratorName: backup-assistant-aws-backup-planner-and-executor-collaborator
+          CollaborationInstruction: You can invoke this agent to perform describe, get, list, create, update, cancel, and delete operations on the AWS Backup service based on user request.
+          RelayConversationHistory: TO_COLLABORATOR
+        - AgentDescriptor:
+            AliasArn: !GetAtt AmazonEC2PlannerAndExecutorBedrockAgentAlias.AgentAliasArn
+          CollaboratorName: backup-assistant-amazon-ec2-planner-and-executor-collaborator
+          CollaborationInstruction: You can invoke this agent to perform all backup and snapshot related operations on Amazon EC2 and Amazon EBS services based on user request.
+          RelayConversationHistory: TO_COLLABORATOR
+        - AgentDescriptor:
+            AliasArn: !GetAtt AmazonS3PlannerAndExecutorBedrockAgentAlias.AgentAliasArn
+          CollaboratorName: backup-assistant-amazon-s3-planner-and-executor-collaborator
+          CollaborationInstruction: You can invoke this agent to perform all backup related operations on the Amazon S3 service based on user request.
+          RelayConversationHistory: TO_COLLABORATOR
+        - AgentDescriptor:
+            AliasArn: !GetAtt AmazonRDSPlannerAndExecutorBedrockAgentAlias.AgentAliasArn
+          CollaboratorName: backup-assistant-amazon-rds-planner-and-executor-collaborator
+          CollaborationInstruction: You can invoke this agent to perform all backup related operations on the Amazon RDS service based on user request.
+          RelayConversationHistory: TO_COLLABORATOR
+    DependsOn:
+      - BackupAssistantKey
+      - SupervisorBedrockAgentExecutionRolePolicy
+  BackupAssistantSupervisorBedrockAgentAlias:
+    Type: 'AWS::Bedrock::AgentAlias'
+    Properties:
+      AgentAliasName: alias-1
+      Description: Alias for Backup Assistant Supervisor agent.
+      AgentId: !GetAtt BackupAssistantSupervisorBedrockAgent.AgentId
+    DependsOn:
+      - BackupAssistantSupervisorBedrockAgent
+
+  CodeRepository:
+    Type: AWS::SageMaker::CodeRepository
+    Properties:
+      GitConfig:
+          RepositoryUrl:
+            Ref: CodeRepositoryURL
+  SMNotebookExecutionRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      Description: SM notebook execution role for backup-assistant
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - sagemaker.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+  SMNotebookExecutionRolePolicy:
+    Type: 'AWS::IAM::RolePolicy'
+    Properties:
+      PolicyName: SMNotebookExecutionRolePolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "CodeCommitPermissions"
+            Effect: Allow
+            Action:
+              - codecommit:GitPull
+              - codecommit:Get*
+              - codecommit:List*
+            Resource: '*'
+          - Sid: "BedrockPermissions"
+            Effect: Allow
+            Action:
+              - bedrock:Get*
+              - bedrock:List*
+              - bedrock:Ingest*
+              - bedrock:Invoke*
+              - bedrock:StartIngestionJob
+            Resource: '*'
+          - Sid: "KMSPermissions"
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource:
+              - !GetAtt BackupAssistantKey.Arn
+          - Sid: "VPCPermissions"
+            Effect: Allow
+            Action:
+              - ec2:CreateNetworkInterface
+              - ec2:DeleteNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSubnets
+              - ec2:DetachNetworkInterface
+              - ec2:AssignPrivateIpAddresses
+              - ec2:UnassignPrivateIpAddresses
+            Resource: '*'
+          - Sid: "S3ListBucketPermissions"
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource:
+              - !GetAtt KBDataSourceS3Bucket.Arn
+            Condition:
+              StringEquals:
+                "aws:ResourceAccount": !Ref AWS::AccountId
+          - Sid: "S3GetAndPutPermissions"
+            Effect: Allow
+            Action:
+              - s3:Get*
+              - s3:Put*
+            Resource:
+              - !Join [ "", [ !GetAtt KBDataSourceS3Bucket.Arn, "/*" ] ]
+            Condition:
+              StringEquals:
+                "aws:ResourceAccount": !Ref AWS::AccountId
+          - Sid: "NotebookRolePermissions"
+            Effect: Allow
+            Action:
+              - iam:GetRole
+            Resource:
+              - !Join [ "", [ "arn:aws:iam::", !Ref AWS::AccountId, ":role/*" ] ]
+      RoleName: !Ref SMNotebookExecutionRole
+    DependsOn:
+      - BackupAssistantKey
+      - SMNotebookExecutionRole
+  SMNotebookInstance:
+    Type: AWS::SageMaker::NotebookInstance
+    Properties:
+      NotebookInstanceName: backup-assistant-instance
+      PlatformIdentifier: notebook-al2-v3
+      InstanceMetadataServiceConfiguration:
+        MinimumInstanceMetadataServiceVersion: "2"
+      InstanceType: ml.t3.medium
+      KmsKeyId: !GetAtt BackupAssistantKey.KeyId
+      RoleArn: !GetAtt SMNotebookExecutionRole.Arn
+      DefaultCodeRepository: !GetAtt CodeRepository.CodeRepositoryName
+      DirectInternetAccess: Disabled
+      RootAccess: Enabled
+      SecurityGroupIds:
+        - !GetAtt SecurityGroup.GroupId
+      SubnetId: !Ref PrivateSubnet1
+    DependsOn:
+      - BackupAssistantKey
+      - SMNotebookExecutionRolePolicy
+      - CodeRepository
+      - SecurityGroup
+      - PrivateSubnet1
